@@ -12,7 +12,6 @@ const Team = require('./models/Team');
 const app = express();
 const server = http.createServer(app);
 
-// VERY IMPORTANT FOR VERCEL: Allow any origin to connect via CORS
 const io = new Server(server, { 
     cors: { origin: "*", methods:["GET", "POST"] } 
 });
@@ -20,10 +19,8 @@ const io = new Server(server, {
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-// Health Check for Render
 app.get('/health', (req, res) => res.status(200).send('Backend Alive!'));
 
-// Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
     .then(async () => {
         console.log('✅ MongoDB Connected');
@@ -37,7 +34,6 @@ mongoose.connect(process.env.MONGODB_URI)
         }
     }).catch(err => console.log('❌ DB Error:', err));
 
-// Initial Load API
 app.get('/api/data', async (req, res) => {
     try {
         const players = await Player.find();
@@ -53,18 +49,37 @@ app.get('/api/data', async (req, res) => {
 io.on('connection', (socket) => {
     console.log(`⚡ Connected: ${socket.id}`);
 
+    // ADD PLAYER (Now optimized for speed)
     socket.on('addPlayer', async (data) => {
-        await new Player(data).save();
-        io.emit('updatePlayers', await Player.find());
+        try {
+            // Remove the temporary ID sent by the frontend before saving
+            delete data._id; 
+            await new Player(data).save();
+            io.emit('updatePlayers', await Player.find()); // Broadcast real DB data
+        } catch (err) {
+            console.log(err);
+        }
     });
 
+    // START AUCTION (Fix applied here to prevent crashing)
     socket.on('startAuction', async ({playerId, baseValue}) => {
-        let state = await AuctionState.findOne();
-        state.activePlayerId = playerId;
-        state.currentBid = baseValue;
-        state.highestBidder = null;
-        await state.save();
-        io.emit('updateAuction', await AuctionState.findOne().populate('activePlayerId'));
+        try {
+            let state = await AuctionState.findOne();
+            // Safety check: If state got deleted or doesn't exist, create it!
+            if (!state) {
+                state = new AuctionState({});
+            }
+            state.activePlayerId = playerId;
+            state.currentBid = Number(baseValue);
+            state.highestBidder = null;
+            await state.save();
+            
+            const populatedState = await AuctionState.findOne().populate('activePlayerId');
+            io.emit('updateAuction', populatedState);
+        } catch (err) {
+            console.log("Start Auction Error:", err);
+            socket.emit('errorMsg', "Failed to start auction due to Database error.");
+        }
     });
 
     socket.on('placeBid', async ({ teamName, increment }) => {
@@ -109,9 +124,11 @@ io.on('connection', (socket) => {
 
     socket.on('cancelAuction', async () => {
         let state = await AuctionState.findOne();
-        state.activePlayerId = null; state.currentBid = 0; state.highestBidder = null;
-        await state.save();
-        io.emit('updateAuction', state);
+        if(state) {
+            state.activePlayerId = null; state.currentBid = 0; state.highestBidder = null;
+            await state.save();
+            io.emit('updateAuction', state);
+        }
     });
 });
 
