@@ -24,16 +24,22 @@ app.get('/health', (req, res) => res.status(200).send('Backend Alive!'));
 mongoose.connect(process.env.MONGODB_URI)
     .then(async () => {
         console.log('✅ MongoDB Connected');
-        const count = await Team.countDocuments();
-        if (count === 0) {
-            await Team.insertMany([
+        // List ALL 6 teams here
+        const allTeams =[
                 { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 200 },
                 { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 200 },
                 { name: "Dominators", captainEmail: "trirup@nexus.com", budget: 200 },
                 { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 200 },
                 { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 200 },
                 { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 200 }
-            ]);
+            ];
+        // This checks the database. If a team is missing, it creates them instantly!
+        for (let t of allTeams) {
+            const exists = await Team.findOne({ name: t.name });
+            if (!exists) {
+                await Team.create(t);
+                console.log(`➕ Created missing team in DB: ${t.name}`);
+            }
         }
     }).catch(err => console.log('❌ DB Error:', err));
 
