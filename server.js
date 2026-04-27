@@ -105,6 +105,22 @@ io.on('connection', (socket) => {
             console.log(err);
         }
     });
+    // ADD EXTRA BUDGET TO ALL TEAMS
+    socket.on('addExtraBudget', async (extraAmount) => {
+        try {
+            // $inc is a MongoDB command that securely adds to the existing number
+            await Team.updateMany({}, { $inc: { budget: Number(extraAmount) } });
+            
+            // Instantly update the screens for everyone
+            io.emit('updateTeams', await Team.find());
+            
+            // Send a success popup to the Admin
+            socket.emit('alertMsg', `✅ Successfully added ${extraAmount}L to all team purses!`);
+        } catch (err) {
+            console.log("Budget Update Error:", err);
+            socket.emit('errorMsg', "Failed to update budgets.");
+        }
+    });
     // DELETE PLAYER
     socket.on('deletePlayer', async (playerId) => {
         try {
