@@ -60,6 +60,28 @@ io.on('connection', (socket) => {
             console.log(err);
         }
     });
+    // DELETE PLAYER
+    socket.on('deletePlayer', async (playerId) => {
+        try {
+            await Player.findByIdAndDelete(playerId);
+            
+            // Safety Check: If the deleted player was on the live auction block, cancel the auction
+            let state = await AuctionState.findOne();
+            if (state && state.activePlayerId && state.activePlayerId.toString() === playerId) {
+                state.activePlayerId = null;
+                state.currentBid = 0;
+                state.highestBidder = null;
+                await state.save();
+                io.emit('updateAuction', state);
+            }
+
+            // Send the updated player list to all users
+            io.emit('updatePlayers', await Player.find());
+        } catch (err) {
+            console.log("Delete Player Error:", err);
+            socket.emit('errorMsg', "Failed to delete player.");
+        }
+    });
 
     // START AUCTION (Fix applied here to prevent crashing)
     socket.on('startAuction', async ({playerId, baseValue}) => {
