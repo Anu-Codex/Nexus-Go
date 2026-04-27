@@ -149,26 +149,48 @@ io.on('connection', (socket) => {
         }
     });
 
+    // PLACE BID (Now with 100% strict error reporting)
     socket.on('placeBid', async ({ teamName, increment }) => {
-        
-        // Safety check to prevent crashing if a team name is typed wrong
-        if (!team) {
-            return socket.emit('errorMsg', "System Error: Team not found in database! Check exact spelling.");
-        }
-        let state = await AuctionState.findOne();
-        if (!state.activePlayerId || state.highestBidder === teamName) return;
+        try {
+            console.log(`👉 Bid attempt received from:[${teamName}] for +${increment}L`);
+            
+            let state = await AuctionState.findOne();
+            
+            // 1. Check if auction is actually running
+            if (!state || !state.activePlayerId) {
+                return socket.emit('errorMsg', "No active auction running!");
+            }
+            
+            // 2. Check if they are already the highest bidder
+            if (state.highestBidder === teamName) {
+                return socket.emit('errorMsg', "You are already the highest bidder!");
+            }
 
-        const team = await Team.findOne({ name: teamName });
-        const newBidAmount = state.currentBid + increment;
-        
-        if (team.budget < newBidAmount) {
-            return socket.emit('errorMsg', "Insufficient Budget! You need " + newBidAmount + "L");
-        }
+            // 3. Check if team exists in DB
+            const team = await Team.findOne({ name: teamName });
+            if (!team) {
+                return socket.emit('errorMsg', `Team '${teamName}' not found in database! Please check exact spelling.`);
+            }
 
-        state.currentBid = newBidAmount;
-        state.highestBidder = teamName;
-        await state.save();
-        io.emit('updateAuction', await AuctionState.findOne().populate('activePlayerId'));
+            // 4. Check budget
+            const newBidAmount = state.currentBid + increment;
+            if (team.budget < newBidAmount) {
+                return socket.emit('errorMsg', `Insufficient Budget! You need ${newBidAmount}L but only have ${team.budget}L.`);
+            }
+
+            // If it passes all checks, save the bid!
+            state.currentBid = newBidAmount;
+            state.highestBidder = teamName;
+            await state.save();
+            
+            console.log(`✅ Bid successful! ${teamName} now holds the bid at ${newBidAmount}L`);
+            
+            io.emit('updateAuction', await AuctionState.findOne().populate('activePlayerId'));
+            
+        } catch (err) {
+            console.log("❌ Server Error during bid:", err);
+            socket.emit('errorMsg', "Server error while processing bid.");
+        }
     });
 
     socket.on('sellPlayer', async () => {
