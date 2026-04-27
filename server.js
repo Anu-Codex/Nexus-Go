@@ -130,6 +130,12 @@ io.on('connection', (socket) => {
     });
 
     socket.on('placeBid', async ({ teamName, increment }) => {
+        const team = await Team.findOne({ name: teamName });
+        
+        // Safety check to prevent crashing if a team name is typed wrong
+        if (!team) {
+            return socket.emit('errorMsg', "System Error: Team not found in database! Check exact spelling.");
+        }
         let state = await AuctionState.findOne();
         if (!state.activePlayerId || state.highestBidder === teamName) return;
 
