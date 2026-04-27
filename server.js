@@ -46,7 +46,7 @@ mongoose.connect(process.env.MONGODB_URI)
 app.get('/api/data', async (req, res) => {
     try {
         const players = await Player.find();
-        const teams = await Team.find();
+        let teams = await Team.find();
         let state = await AuctionState.findOne().populate('activePlayerId');
         if (!state) state = await AuctionState.create({});
         res.json({ players, teams, state });
