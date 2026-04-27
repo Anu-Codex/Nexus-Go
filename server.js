@@ -42,6 +42,26 @@ mongoose.connect(process.env.MONGODB_URI)
             }
         }
     }).catch(err => console.log('❌ DB Error:', err));
+// SECRET ROUTE TO FORCE-RESET ALL TEAMS
+app.get('/reset-teams', async (req, res) => {
+    try {
+        await Team.deleteMany({}); // Delete old corrupted teams
+        
+        // ADD ALL 6 TEAMS HERE EXACTLY AS THEY ARE IN YOUR FRONTEND:
+        await Team.insertMany([
+            { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 200 },
+                { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 200 },
+                { name: "Dominators", captainEmail: "trirup@nexus.com", budget: 200 },
+                { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 200 },
+                { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 200 },
+                { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 200 }
+        ]);
+        
+        res.send("✅ All 6 Teams successfully reset and budgets restored to 200 Lakhs! You can close this page and go back to your auction.");
+    } catch (e) {
+        res.status(500).send("Error resetting teams: " + e.message);
+    }
+});
 
 app.get('/api/data', async (req, res) => {
     try {
