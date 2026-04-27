@@ -48,6 +48,22 @@ app.get('/api/data', async (req, res) => {
 
 io.on('connection', (socket) => {
     console.log(`⚡ Connected: ${socket.id}`);
+    // SEND INITIAL DATA ON CONNECTION
+    const sendInitialData = async () => {
+        try {
+            const players = await Player.find();
+            const teams = await Team.find();
+            let state = await AuctionState.findOne().populate('activePlayerId');
+            if (!state) {
+                state = new AuctionState({});
+                await state.save();
+            }
+            socket.emit('initialData', { players, teams, state });
+        } catch (err) {
+            console.log("Error sending initial data:", err);
+        }
+    };
+    sendInitialData();
 
     // ADD PLAYER (Now optimized for speed)
     socket.on('addPlayer', async (data) => {
