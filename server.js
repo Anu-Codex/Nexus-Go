@@ -46,7 +46,7 @@ mongoose.connect(process.env.MONGODB_URI)
 app.get('/api/data', async (req, res) => {
     try {
         const players = await Player.find();
-        let teams = await Team.find();
+        const teams = await Team.find();
         let state = await AuctionState.findOne().populate('activePlayerId');
         if (!state) state = await AuctionState.create({});
         res.json({ players, teams, state });
@@ -130,7 +130,6 @@ io.on('connection', (socket) => {
     });
 
     socket.on('placeBid', async ({ teamName, increment }) => {
-        const team = await Team.findOne({ name: teamName });
         
         // Safety check to prevent crashing if a team name is typed wrong
         if (!team) {
