@@ -27,9 +27,12 @@ mongoose.connect(process.env.MONGODB_URI)
         const count = await Team.countDocuments();
         if (count === 0) {
             await Team.insertMany([
-                { name: "FC Strikers", captainEmail: "team1@nexus.com", budget: 200 },
-                { name: "United PES", captainEmail: "team2@nexus.com", budget: 200 },
-                { name: "Galacticos", captainEmail: "team3@nexus.com", budget: 200 }
+                { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 200 },
+                { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 200 },
+                { name: "Dominators", captainEmail: "trirup@nexus.com", budget: 200 },
+                { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 200 },
+                { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 200 },
+                { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 200 }
             ]);
         }
     }).catch(err => console.log('❌ DB Error:', err));
