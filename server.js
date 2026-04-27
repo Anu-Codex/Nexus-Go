@@ -26,12 +26,12 @@ mongoose.connect(process.env.MONGODB_URI)
         console.log('✅ MongoDB Connected');
         // List ALL 6 teams here
         const allTeams =[
-                { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 200 },
-                { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 200 },
-                { name: "Dominators", captainEmail: "trirup@nexus.com", budget: 200 },
-                { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 200 },
-                { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 200 },
-                { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 200 }
+                { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 500 },
+                { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 500 },
+                { name: "Dominators", captainEmail: "trirup@nexus.com", budget: 500 },
+                { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 500 },
+                { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 500 },
+                { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 500 }
             ];
         // This checks the database. If a team is missing, it creates them instantly!
         for (let t of allTeams) {
@@ -49,17 +49,28 @@ app.get('/reset-teams', async (req, res) => {
         
         // ADD ALL 6 TEAMS HERE EXACTLY AS THEY ARE IN YOUR FRONTEND:
         await Team.insertMany([
-            { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 200 },
-                { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 200 },
-                { name: "Dominators", captainEmail: "trirup@nexus.com", budget: 200 },
-                { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 200 },
-                { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 200 },
-                { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 200 }
+            { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 500 },
+                { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 500 },
+                { name: "Dominators", captainEmail: "trirup@nexus.com", budget: 500 },
+                { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 500 },
+                { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 500 },
+                { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 500 }
         ]);
         
         res.send("✅ All 6 Teams successfully reset and budgets restored to 200 Lakhs! You can close this page and go back to your auction.");
     } catch (e) {
         res.status(500).send("Error resetting teams: " + e.message);
+    }
+});
+// SECRET ROUTE TO FIX CRASHED BUDGETS
+app.get('/fix-budgets', async (req, res) => {
+    try {
+        // $set forces the database to erase the bad math and perfectly set the budget to 500 Lakhs (5 Cr)
+        await Team.updateMany({}, { $set: { budget: 500 } });
+        
+        res.send("✅ All Team budgets have been successfully rescued and reset to exactly 500 Lakhs (5 Cr)! You can close this page and refresh your auction website.");
+    } catch (e) {
+        res.status(500).send("Error fixing budgets: " + e.message);
     }
 });
 
