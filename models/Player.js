@@ -1,9 +1,13 @@
 const mongoose = require('mongoose');
-module.exports = mongoose.model('Player', new mongoose.Schema({
-    name: { type: String, required: true },
-    strength: { type: Number, required: true },
-    cardType: { type: String, required: true },
-    value: { type: Number, required: true },
+
+const playerSchema = new mongoose.Schema({
+    name: String,
+    strength: Number,
+    cardType: String,
+    baseValue: Number,
     status: { type: String, default: 'Available' },
     soldTo: { type: String, default: '-' }
-}));
+});
+
+// The word 'Player' here will look for a collection named "players" in MongoDB
+module.exports = mongoose.model('Player', playerSchema);
