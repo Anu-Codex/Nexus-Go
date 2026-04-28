@@ -101,12 +101,15 @@ io.on('connection', (socket) => {
         try {
             const players = await Player.find();
             const teams = await Team.find();
+            const chats = await Chat.find().sort({ timestamp: 1 }).limit(100); // Loads last 100 chats
+            
             let state = await AuctionState.findOne().populate('activePlayerId');
             if (!state) {
                 state = new AuctionState({});
                 await state.save();
             }
-            socket.emit('initialData', { players, teams, state });
+            // Send everything including chats instantly
+            socket.emit('initialData', { players, teams, state, chats });
         } catch (err) {
             console.log("Error sending initial data:", err);
         }
