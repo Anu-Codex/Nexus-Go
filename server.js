@@ -8,6 +8,14 @@ const cors = require('cors');
 const Player = require('./models/Player');
 const AuctionState = require('./models/AuctionState');
 const Team = require('./models/Team');
+// CHAT SCHEMA (Saves messages to MongoDB)
+const chatSchema = new mongoose.Schema({
+    sender: String,
+    role: String,
+    text: String,
+    timestamp: { type: Date, default: Date.now }
+});
+const Chat = mongoose.model('Chat', chatSchema);
 
 const app = express();
 const server = http.createServer(app);
