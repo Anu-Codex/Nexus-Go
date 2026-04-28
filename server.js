@@ -165,6 +165,21 @@ io.on('connection', (socket) => {
             socket.emit('errorMsg', "Failed to delete player.");
         }
     });
+    // HANDLE LIVE CHAT
+    socket.on('sendMessage', async (data) => {
+        try {
+            // Save to database instantly
+            const newChat = await Chat.create({
+                sender: data.sender,
+                role: data.role,
+                text: data.text
+            });
+            // Broadcast to EVERYONE's screen instantly
+            io.emit('newMessage', newChat);
+        } catch (err) {
+            console.log("Chat save error:", err);
+        }
+    });
 
     // START AUCTION (Fix applied here to prevent crashing)
     socket.on('startAuction', async ({playerId, baseValue}) => {
