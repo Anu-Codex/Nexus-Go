@@ -20,8 +20,11 @@ const Chat = mongoose.model('Chat', chatSchema);
 const app = express();
 const server = http.createServer(app);
 
-const io = new Server(server, { 
-    cors: { origin: "*", methods:["GET", "POST"] } 
+const io = require('socket.io')(server, {
+  cors: {
+    origin: "*", // This allows ANY website to connect (best for testing)
+    methods: ["GET", "POST"]
+  }
 });
 
 app.use(cors({ origin: "*" }));
