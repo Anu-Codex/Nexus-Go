@@ -40,7 +40,7 @@ mongoose.connect(process.env.MONGODB_URI)
                 { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 1000 },
                 { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 1000 },
                 { name: "Archmage", captainEmail: "aviroop@nexus.com", budget: 1000 },
-                { name: "Aura Farmer's", captainEmail: "bishal@nexus.com", budget: 1000 },
+                { name: "Shadow Raze", captainEmail: "bishal@nexus.com", budget: 1000 },
                 { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 1000 },
                 { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 1000 }
             ];
@@ -63,7 +63,7 @@ app.get('/reset-teams', async (req, res) => {
             { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 1000 },
                 { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 1000 },
                 { name: "Archmage", captainEmail: "aviroop@nexus.com", budget: 1000 },
-                { name: "Aura Farmer's", captainEmail: "bishal@nexus.com", budget: 1000 },
+                { name: "Shadow Raze", captainEmail: "bishal@nexus.com", budget: 1000 },
                 { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 1000 },
                 { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 1000 }
         ]);
