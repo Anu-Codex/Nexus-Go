@@ -119,17 +119,32 @@ io.on('connection', (socket) => {
     };
     sendInitialData();
 
-    // ADD PLAYER (Now optimized for speed)
-    socket.on('addPlayer', async (data) => {
-        try {
-            // Remove the temporary ID sent by the frontend before saving
-            delete data._id; 
-            await new Player(data).save();
-            io.emit('updatePlayers', await Player.find()); // Broadcast real DB data
-        } catch (err) {
-            console.log(err);
-        }
-    });
+    // --- UPDATED ADD PLAYER WITH ERROR FEEDBACK ---
+socket.on('addPlayer', async (data) => {
+    try {
+        console.log("📥 Received new player data:", data);
+        
+        // Remove ID if it exists to let MongoDB create a new one
+        if (data._id) delete data._id; 
+
+        // Create and save
+        const newPlayer = new Player(data);
+        await newPlayer.save();
+
+        console.log("✅ Player saved to DB!");
+        
+        // Send the updated list to EVERYONE
+        const allPlayers = await Player.find();
+        io.emit('updatePlayers', allPlayers);
+        
+        // Send a success pop-up to the Admin who added it
+        socket.emit('alertMsg', `Successfully added ${data.name}!`);
+    } catch (err) {
+        console.error("❌ DB SAVE ERROR:", err.message);
+        // This sends the exact error (like "name is required") back to your screen
+        socket.emit('errorMsg', "Database Error: " + err.message);
+    }
+});
     // ADD EXTRA BUDGET TO ALL TEAMS
     socket.on('addExtraBudget', async (extraAmount) => {
         try {
