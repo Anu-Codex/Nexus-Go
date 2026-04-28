@@ -38,7 +38,7 @@ mongoose.connect(process.env.MONGODB_URI)
         // List ALL 6 teams here
         const allTeams =[
                 { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 1000 },
-                { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 1000 },
+                { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 1000 },
                 { name: "Archmage", captainEmail: "aviroop@nexus.com", budget: 1000 },
                 { name: "Shadow Raze", captainEmail: "bishal@nexus.com", budget: 1000 },
                 { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 1000 },
@@ -61,7 +61,7 @@ app.get('/reset-teams', async (req, res) => {
         // ADD ALL 6 TEAMS HERE EXACTLY AS THEY ARE IN YOUR FRONTEND:
         await Team.insertMany([
             { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 1000 },
-                { name: "Team NRG", captainEmail: "sukdeb@nexus.com", budget: 1000 },
+                { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 1000 },
                 { name: "Archmage", captainEmail: "aviroop@nexus.com", budget: 1000 },
                 { name: "Shadow Raze", captainEmail: "bishal@nexus.com", budget: 1000 },
                 { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 1000 },
