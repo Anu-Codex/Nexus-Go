@@ -1,15 +1,25 @@
 {
-  "name": "nexus-backend",
+  "name": "nexus-auction-backend-turso",
   "version": "1.0.0",
+  "description": "Nexus PES Legends Auction Portal Backend with Turso Database",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "dependencies": {
+    "@libsql/client": "^0.6.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "mongoose": "^8.3.2",
     "socket.io": "^4.7.5"
-  }
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "Nexus PES",
+  "license": "ISC"
 }
