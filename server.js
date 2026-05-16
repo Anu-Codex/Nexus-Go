@@ -6,68 +6,94 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+app.use(cors());
 
-const db = createClient({
-  url: process.env.TURSO_DATABASE_URL,
-  authToken: process.env.TURSO_AUTH_TOKEN,
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: "*", // Allows any frontend to connect
+        methods: ["GET", "POST"]
+    }
 });
 
-// Helper to make SQLite data look like MongoDB data for your frontend
+// TURSO CLIENT
+const db = createClient({
+    url: process.env.TURSO_DATABASE_URL || "",
+    authToken: process.env.TURSO_AUTH_TOKEN || "",
+});
+
+// Helper to make SQLite data look like MongoDB data
 const format = (row) => {
     if (!row) return null;
-    return { ...row, _id: row.id.toString() }; 
+    return { ...row, _id: row.id ? row.id.toString() : null }; 
 };
 
-async function initDb() {
-    await db.execute(`CREATE TABLE IF NOT EXISTS players (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, strength INTEGER, cardType TEXT, status TEXT, baseValue INTEGER, soldTo TEXT)`);
-    await db.execute(`CREATE TABLE IF NOT EXISTS teams (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, captainEmail TEXT, budget INTEGER)`);
-    await db.execute(`CREATE TABLE IF NOT EXISTS auction_state (id INTEGER PRIMARY KEY, activePlayerId INTEGER, currentBid INTEGER, highestBidder TEXT)`);
-    await db.execute(`CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT, role TEXT, text TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-    
-    await db.execute(`INSERT OR IGNORE INTO auction_state (id, activePlayerId, currentBid, highestBidder) VALUES (1, NULL, 0, NULL)`);
+// INITIALIZE DATABASE AND START SERVER
+async function startServer() {
+    try {
+        console.log("⏳ Initializing Turso Database...");
+        await db.execute(`CREATE TABLE IF NOT EXISTS players (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, strength INTEGER, cardType TEXT, status TEXT, baseValue INTEGER, soldTo TEXT)`);
+        await db.execute(`CREATE TABLE IF NOT EXISTS teams (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, captainEmail TEXT, budget INTEGER)`);
+        await db.execute(`CREATE TABLE IF NOT EXISTS auction_state (id INTEGER PRIMARY KEY, activePlayerId INTEGER, currentBid INTEGER, highestBidder TEXT)`);
+        await db.execute(`CREATE TABLE IF NOT EXISTS chats (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT, role TEXT, text TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+        
+        await db.execute(`INSERT OR IGNORE INTO auction_state (id, activePlayerId, currentBid, highestBidder) VALUES (1, NULL, 0, NULL)`);
 
-    const teams = [
-        ["Team SHAKTI", "avirup@nexus.com", 1000],
-        ["Aura Farmer's", "gourav@nexus.com", 1000],
-        ["Archmage", "aviroop@nexus.com", 1000],
-        ["Shadow Raze", "bishal@nexus.com", 1000],
-        ["RISING FALCONS", "abhisek@nexus.com", 1000],
-        ["Golden Knights FC", "sanju@nexus.com", 1000]
-    ];
-    for (const [name, email, budget] of teams) {
-        await db.execute({
-            sql: "INSERT OR IGNORE INTO teams (name, captainEmail, budget) VALUES (?, ?, ?)",
-            args: [name, email, budget]
+        const teams = [
+            ["Team SHAKTI", "avirup@nexus.com", 1000],
+            ["Aura Farmer's", "gourav@nexus.com", 1000],
+            ["Archmage", "aviroop@nexus.com", 1000],
+            ["Shadow Raze", "bishal@nexus.com", 1000],
+            ["RISING FALCONS", "abhisek@nexus.com", 1000],
+            ["Golden Knights FC", "sanju@nexus.com", 1000]
+        ];
+        for (const [name, email, budget] of teams) {
+            await db.execute({
+                sql: "INSERT OR IGNORE INTO teams (name, captainEmail, budget) VALUES (?, ?, ?)",
+                args: [name, email, budget]
+            });
+        }
+        console.log("✅ Turso Database Ready");
+
+        // START LISTENING
+        const PORT = process.env.PORT || 3000;
+        server.listen(PORT, () => {
+            console.log(`🚀 Server running on port ${PORT}`);
         });
+
+    } catch (err) {
+        console.error("❌ Failed to start server:", err);
     }
-    console.log("✅ Turso Database Initialized");
 }
 
-initDb();
+// Health Check Route
+app.get('/', (req, res) => res.send("Auction Server is Running"));
 
 io.on('connection', async (socket) => {
-    const sendData = async () => {
-        const pRes = await db.execute("SELECT * FROM players");
-        const tRes = await db.execute("SELECT * FROM teams");
-        const cRes = await db.execute("SELECT * FROM chats ORDER BY id DESC LIMIT 50");
-        const sRes = await db.execute("SELECT * FROM auction_state WHERE id = 1");
+    console.log("👤 User connected:", socket.id);
 
-        const players = pRes.rows.map(format);
-        const teams = tRes.rows.map(format);
-        const chats = cRes.rows.map(format).reverse();
-        let state = sRes.rows[0];
+    const sendInitialData = async () => {
+        try {
+            const pRes = await db.execute("SELECT * FROM players");
+            const tRes = await db.execute("SELECT * FROM teams");
+            const cRes = await db.execute("SELECT * FROM chats ORDER BY id DESC LIMIT 50");
+            const sRes = await db.execute("SELECT * FROM auction_state WHERE id = 1");
 
-        if (state && state.activePlayerId) {
-            const activeP = await db.execute({ sql: "SELECT * FROM players WHERE id = ?", args: [state.activePlayerId] });
-            state.activePlayerId = format(activeP.rows[0]);
-        }
+            const players = pRes.rows.map(format);
+            const teams = tRes.rows.map(format);
+            const chats = cRes.rows.map(format).reverse();
+            let state = sRes.rows[0];
 
-        socket.emit('initialData', { players, teams, state, chats });
+            if (state && state.activePlayerId) {
+                const activeP = await db.execute({ sql: "SELECT * FROM players WHERE id = ?", args: [state.activePlayerId] });
+                state.activePlayerId = format(activeP.rows[0]);
+            }
+
+            socket.emit('initialData', { players, teams, state, chats });
+        } catch (e) { console.error("Error sending initial data:", e); }
     };
 
-    await sendData();
+    await sendInitialData();
 
     socket.on('addPlayer', async (data) => {
         try {
@@ -77,7 +103,6 @@ io.on('connection', async (socket) => {
             });
             const p = await db.execute("SELECT * FROM players");
             io.emit('updatePlayers', p.rows.map(format));
-            socket.emit('alertMsg', "Player Added!");
         } catch (e) { console.error(e); }
     });
 
@@ -92,6 +117,7 @@ io.on('connection', async (socket) => {
         const sRes = await db.execute("SELECT * FROM auction_state WHERE id = 1");
         const state = sRes.rows[0];
         const tRes = await db.execute({ sql: "SELECT * FROM teams WHERE name = ?", args: [teamName] });
+        if(tRes.rows.length === 0) return;
         const team = tRes.rows[0];
 
         const newBid = state.currentBid + increment;
@@ -105,7 +131,10 @@ io.on('connection', async (socket) => {
     });
 
     socket.on('sellPlayer', async () => {
-        const state = (await db.execute("SELECT * FROM auction_state WHERE id = 1")).rows[0];
+        const stateRes = await db.execute("SELECT * FROM auction_state WHERE id = 1");
+        const state = stateRes.rows[0];
+        if (!state.activePlayerId || !state.highestBidder) return;
+
         await db.execute({ sql: "UPDATE teams SET budget = budget - ? WHERE name = ?", args: [state.currentBid, state.highestBidder] });
         await db.execute({ sql: "UPDATE players SET status = 'Sold', soldTo = ? WHERE id = ?", args: [`${state.highestBidder} (${state.currentBid}L)`, state.activePlayerId] });
         await db.execute("UPDATE auction_state SET activePlayerId = NULL, currentBid = 0, highestBidder = NULL WHERE id = 1");
@@ -129,9 +158,4 @@ io.on('connection', async (socket) => {
     });
 });
 
-app.get('/reset-teams', async (req, res) => {
-    await db.execute("UPDATE teams SET budget = 1000");
-    res.send("Reset Successful");
-});
-
-server.listen(process.env.PORT || 3000, () => console.log("Server Running"));
+startServer();
