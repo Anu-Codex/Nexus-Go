@@ -1,300 +1,215 @@
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
-const mongoose = require('mongoose');
+const { createClient } = require('@libsql/client');
 const { Server } = require('socket.io');
 const cors = require('cors');
-
-const Player = require('./models/Player');
-const AuctionState = require('./models/AuctionState');
-const Team = require('./models/Team');
-// CHAT SCHEMA (Saves messages to MongoDB)
-const chatSchema = new mongoose.Schema({
-    sender: String,
-    role: String,
-    text: String,
-    timestamp: { type: Date, default: Date.now }
-});
-const Chat = mongoose.model('Chat', chatSchema);
 
 const app = express();
 const server = http.createServer(app);
 
-const io = require('socket.io')(server, {
-  cors: {
-    origin: "*", // This allows ANY website to connect (best for testing)
-    methods: ["GET", "POST"]
-  }
+// --- TURSO CONNECTION ---
+const db = createClient({
+  url: process.env.TURSO_DATABASE_URL,
+  authToken: process.env.TURSO_AUTH_TOKEN,
 });
 
-app.use(cors({ origin: "*" }));
-app.use(express.json());
+// --- DATABASE INITIALIZATION (Tables) ---
+async function initDb() {
+    // Players Table
+    await db.execute(`CREATE TABLE IF NOT EXISTS players (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        strength INTEGER,
+        cardType TEXT,
+        status TEXT DEFAULT 'Available',
+        baseValue INTEGER,
+        soldTo TEXT DEFAULT '-'
+    )`);
 
-app.get('/health', (req, res) => res.status(200).send('Backend Alive!'));
+    // Teams Table
+    await db.execute(`CREATE TABLE IF NOT EXISTS teams (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE,
+        captainEmail TEXT,
+        budget INTEGER
+    )`);
 
-mongoose.connect(process.env.MONGODB_URI)
-    .then(async () => {
-        console.log('✅ MongoDB Connected');
-        // List ALL 6 teams here
-        const allTeams =[
-                { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 1000 },
-                { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 1000 },
-                { name: "Archmage", captainEmail: "aviroop@nexus.com", budget: 1000 },
-                { name: "Shadow Raze", captainEmail: "bishal@nexus.com", budget: 1000 },
-                { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 1000 },
-                { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 1000 }
-            ];
-        // This checks the database. If a team is missing, it creates them instantly!
-        for (let t of allTeams) {
-            const exists = await Team.findOne({ name: t.name });
-            if (!exists) {
-                await Team.create(t);
-                console.log(`➕ Created missing team in DB: ${t.name}`);
-            }
-        }
-    }).catch(err => console.log('❌ DB Error:', err));
-// SECRET ROUTE TO FORCE-RESET ALL TEAMS
-app.get('/reset-teams', async (req, res) => {
-    try {
-        await Team.deleteMany({}); // Delete old corrupted teams
-        
-        // ADD ALL 6 TEAMS HERE EXACTLY AS THEY ARE IN YOUR FRONTEND:
-        await Team.insertMany([
-            { name: "Team SHAKTI", captainEmail: "avirup@nexus.com", budget: 1000 },
-                { name: "Aura Farmer's", captainEmail: "gourav@nexus.com", budget: 1000 },
-                { name: "Archmage", captainEmail: "aviroop@nexus.com", budget: 1000 },
-                { name: "Shadow Raze", captainEmail: "bishal@nexus.com", budget: 1000 },
-                { name: "RISING FALCONS", captainEmail: "abhisek@nexus.com", budget: 1000 },
-                { name: "Golden Knights FC", captainEmail: "sanju@nexus.com", budget: 1000 }
-        ]);
-        
-        res.send("✅ All 6 Teams successfully reset and budgets restored to 200 Lakhs! You can close this page and go back to your auction.");
-    } catch (e) {
-        res.status(500).send("Error resetting teams: " + e.message);
+    // Auction State Table (Single Row)
+    await db.execute(`CREATE TABLE IF NOT EXISTS auction_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        activePlayerId INTEGER,
+        currentBid INTEGER DEFAULT 0,
+        highestBidder TEXT
+    )`);
+
+    // Chats Table
+    await db.execute(`CREATE TABLE IF NOT EXISTS chats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sender TEXT,
+        role TEXT,
+        text TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`);
+
+    // Insert Default Auction State
+    await db.execute(`INSERT OR IGNORE INTO auction_state (id, activePlayerId, currentBid, highestBidder) VALUES (1, NULL, 0, NULL)`);
+
+    // Seed Teams
+    const teams = [
+        ["Team SHAKTI", "avirup@nexus.com", 1000],
+        ["Aura Farmer's", "gourav@nexus.com", 1000],
+        ["Archmage", "aviroop@nexus.com", 1000],
+        ["Shadow Raze", "bishal@nexus.com", 1000],
+        ["RISING FALCONS", "abhisek@nexus.com", 1000],
+        ["Golden Knights FC", "sanju@nexus.com", 1000]
+    ];
+    for (const [name, email, budget] of teams) {
+        await db.execute({
+            sql: "INSERT OR IGNORE INTO teams (name, captainEmail, budget) VALUES (?, ?, ?)",
+            args: [name, email, budget]
+        });
     }
-});
-// SECRET ROUTE TO FIX CRASHED BUDGETS
-app.get('/fix-budgets', async (req, res) => {
-    try {
-        // $set forces the database to erase the bad math and perfectly set the budget to 500 Lakhs (5 Cr)
-        await Team.updateMany({}, { $set: { budget: 1000 } });
-        
-        res.send("✅ All Team budgets have been successfully rescued and reset to exactly 500 Lakhs (5 Cr)! You can close this page and refresh your auction website.");
-    } catch (e) {
-        res.status(500).send("Error fixing budgets: " + e.message);
-    }
-});
+    console.log("✅ Turso SQLite Tables & Seed Data Ready");
+}
 
-app.get('/api/data', async (req, res) => {
-    try {
-        const players = await Player.find();
-        const teams = await Team.find();
-        let state = await AuctionState.findOne().populate('activePlayerId');
-        if (!state) state = await AuctionState.create({});
-        res.json({ players, teams, state });
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
+initDb().catch(console.error);
 
-io.on('connection', (socket) => {
+// --- HELPERS to match Frontend Expectations (_id) ---
+const formatPlayer = (p) => ({ ...p, _id: p.id.toString() });
+const formatTeam = (t) => ({ ...t, _id: t.id.toString() });
+
+// --- SOCKET LOGIC ---
+const io = new Server(server, { cors: { origin: "*" } });
+
+io.on('connection', async (socket) => {
     console.log(`⚡ Connected: ${socket.id}`);
-    // SEND INITIAL DATA ON CONNECTION
-    const sendInitialData = async () => {
-        try {
-            const players = await Player.find();
-            const teams = await Team.find();
-            const chats = await Chat.find().sort({ timestamp: 1 }).limit(100); // Loads last 100 chats
-            
-            let state = await AuctionState.findOne().populate('activePlayerId');
-            if (!state) {
-                state = new AuctionState({});
-                await state.save();
-            }
-            // Send everything including chats instantly
-            socket.emit('initialData', { players, teams, state, chats });
-        } catch (err) {
-            console.log("Error sending initial data:", err);
-        }
-    };
-    sendInitialData();
 
-    // --- UPDATED ADD PLAYER WITH ERROR FEEDBACK ---
-socket.on('addPlayer', async (data) => {
-    try {
-        console.log("📥 Received new player data:", data);
+    const broadcastData = async () => {
+        const players = (await db.execute("SELECT * FROM players")).rows.map(formatPlayer);
+        const teams = (await db.execute("SELECT * FROM teams")).rows.map(formatTeam);
+        const chats = (await db.execute("SELECT * FROM chats ORDER BY timestamp ASC LIMIT 100")).rows;
         
-        // Remove ID if it exists to let MongoDB create a new one
-        if (data._id) delete data._id; 
-
-        // Create and save
-        const newPlayer = new Player(data);
-        await newPlayer.save();
-
-        console.log("✅ Player saved to DB!");
+        const stateRes = await db.execute("SELECT * FROM auction_state WHERE id = 1");
+        const stateRaw = stateRes.rows[0];
         
-        // Send the updated list to EVERYONE
-        const allPlayers = await Player.find();
-        io.emit('updatePlayers', allPlayers);
-        
-        // Send a success pop-up to the Admin who added it
-        socket.emit('alertMsg', `Successfully added ${data.name}!`);
-    } catch (err) {
-        console.error("❌ DB SAVE ERROR:", err.message);
-        // This sends the exact error (like "name is required") back to your screen
-        socket.emit('errorMsg', "Database Error: " + err.message);
-    }
-});
-    // ADD EXTRA BUDGET TO ALL TEAMS
-    socket.on('addExtraBudget', async (extraAmount) => {
-        try {
-            // $inc is a MongoDB command that securely adds to the existing number
-            await Team.updateMany({}, { $inc: { budget: Number(extraAmount) } });
-            
-            // Instantly update the screens for everyone
-            io.emit('updateTeams', await Team.find());
-            
-            // Send a success popup to the Admin
-            socket.emit('alertMsg', `✅ Successfully added ${extraAmount}L to all team purses!`);
-        } catch (err) {
-            console.log("Budget Update Error:", err);
-            socket.emit('errorMsg', "Failed to update budgets.");
-        }
-    });
-    // DELETE PLAYER
-    socket.on('deletePlayer', async (playerId) => {
-        try {
-            await Player.findByIdAndDelete(playerId);
-            
-            // Safety Check: If the deleted player was on the live auction block, cancel the auction
-            let state = await AuctionState.findOne();
-            if (state && state.activePlayerId && state.activePlayerId.toString() === playerId) {
-                state.activePlayerId = null;
-                state.currentBid = 0;
-                state.highestBidder = null;
-                await state.save();
-                io.emit('updateAuction', state);
-            }
-
-            // Send the updated player list to all users
-            io.emit('updatePlayers', await Player.find());
-        } catch (err) {
-            console.log("Delete Player Error:", err);
-            socket.emit('errorMsg', "Failed to delete player.");
-        }
-    });
-    // HANDLE LIVE CHAT
-    socket.on('sendMessage', async (data) => {
-        try {
-            // Save to database instantly
-            const newChat = await Chat.create({
-                sender: data.sender,
-                role: data.role,
-                text: data.text
+        let state = { ...stateRaw };
+        if (stateRaw.activePlayerId) {
+            const pRes = await db.execute({
+                sql: "SELECT * FROM players WHERE id = ?",
+                args: [stateRaw.activePlayerId]
             });
-            // Broadcast to EVERYONE's screen instantly
-            io.emit('newMessage', newChat);
-        } catch (err) {
-            console.log("Chat save error:", err);
+            state.activePlayerId = formatPlayer(pRes.rows[0]);
         }
-    });
 
-    // START AUCTION (Fix applied here to prevent crashing)
-    socket.on('startAuction', async ({playerId, baseValue}) => {
+        socket.emit('initialData', { players, teams, state, chats });
+    };
+
+    await broadcastData();
+
+    // 1. Add Player
+    socket.on('addPlayer', async (data) => {
         try {
-            let state = await AuctionState.findOne();
-            // Safety check: If state got deleted or doesn't exist, create it!
-            if (!state) {
-                state = new AuctionState({});
-            }
-            state.activePlayerId = playerId;
-            state.currentBid = Number(baseValue);
-            state.highestBidder = null;
-            await state.save();
-            
-            const populatedState = await AuctionState.findOne().populate('activePlayerId');
-            io.emit('updateAuction', populatedState);
-        } catch (err) {
-            console.log("Start Auction Error:", err);
-            socket.emit('errorMsg', "Failed to start auction due to Database error.");
-        }
+            await db.execute({
+                sql: "INSERT INTO players (name, strength, cardType, baseValue, status, soldTo) VALUES (?, ?, ?, ?, ?, ?)",
+                args: [data.name, data.strength, data.cardType, data.baseValue, 'Available', '-']
+            });
+            const allPlayers = (await db.execute("SELECT * FROM players")).rows.map(formatPlayer);
+            io.emit('updatePlayers', allPlayers);
+        } catch (e) { socket.emit('errorMsg', e.message); }
     });
 
-    // PLACE BID (Now with 100% strict error reporting)
-    socket.on('placeBid', async ({ teamName, increment }) => {
-        try {
-            console.log(`👉 Bid attempt received from:[${teamName}] for +${increment}L`);
-            
-            let state = await AuctionState.findOne();
-            
-            // 1. Check if auction is actually running
-            if (!state || !state.activePlayerId) {
-                return socket.emit('errorMsg', "No active auction running!");
-            }
-            
-            // 2. Check if they are already the highest bidder
-            if (state.highestBidder === teamName) {
-                return socket.emit('errorMsg', "You are already the highest bidder!");
-            }
-
-            // 3. Check if team exists in DB
-            const team = await Team.findOne({ name: teamName });
-            if (!team) {
-                return socket.emit('errorMsg', `Team '${teamName}' not found in database! Please check exact spelling.`);
-            }
-
-            // 4. Check budget
-            const newBidAmount = state.currentBid + increment;
-            if (team.budget < newBidAmount) {
-                return socket.emit('errorMsg', `Insufficient Budget! You need ${newBidAmount}L but only have ${team.budget}L.`);
-            }
-
-            // If it passes all checks, save the bid!
-            state.currentBid = newBidAmount;
-            state.highestBidder = teamName;
-            await state.save();
-            
-            console.log(`✅ Bid successful! ${teamName} now holds the bid at ${newBidAmount}L`);
-            
-            io.emit('updateAuction', await AuctionState.findOne().populate('activePlayerId'));
-            
-        } catch (err) {
-            console.log("❌ Server Error during bid:", err);
-            socket.emit('errorMsg', "Server error while processing bid.");
-        }
+    // 2. Delete Player
+    socket.on('deletePlayer', async (playerId) => {
+        await db.execute({ sql: "DELETE FROM players WHERE id = ?", args: [playerId] });
+        io.emit('updatePlayers', (await db.execute("SELECT * FROM players")).rows.map(formatPlayer));
     });
 
-    socket.on('sellPlayer', async () => {
-        let state = await AuctionState.findOne();
-        if (!state.activePlayerId || !state.highestBidder) return;
+    // 3. Start Auction
+    socket.on('startAuction', async ({ playerId, baseValue }) => {
+        await db.execute({
+            sql: "UPDATE auction_state SET activePlayerId = ?, currentBid = ?, highestBidder = NULL WHERE id = 1",
+            args: [playerId, baseValue]
+        });
         
-        const winningTeam = await Team.findOne({ name: state.highestBidder });
-        if (winningTeam) {
-            winningTeam.budget -= state.currentBid;
-            await winningTeam.save();
-        }
+        const stateRaw = (await db.execute("SELECT * FROM auction_state WHERE id = 1")).rows[0];
+        const pRes = await db.execute({ sql: "SELECT * FROM players WHERE id = ?", args: [playerId] });
+        const populatedState = { ...stateRaw, activePlayerId: formatPlayer(pRes.rows[0]) };
+        
+        io.emit('updateAuction', populatedState);
+    });
 
-        await Player.findByIdAndUpdate(state.activePlayerId, {
-            status: 'Sold',
-            soldTo: `${state.highestBidder} (${state.currentBid}L)`
+    // 4. Place Bid
+    socket.on('placeBid', async ({ teamName, increment }) => {
+        const state = (await db.execute("SELECT * FROM auction_state WHERE id = 1")).rows[0];
+        const teamRes = await db.execute({ sql: "SELECT * FROM teams WHERE name = ?", args: [teamName] });
+        const team = teamRes.rows[0];
+
+        if (!state.activePlayerId) return socket.emit('errorMsg', "No active auction!");
+        if (state.highestBidder === teamName) return socket.emit('errorMsg', "Already leading!");
+
+        const newBid = state.currentBid + increment;
+        if (team.budget < newBid) return socket.emit('errorMsg', "Insufficient budget!");
+
+        await db.execute({
+            sql: "UPDATE auction_state SET currentBid = ?, highestBidder = ? WHERE id = 1",
+            args: [newBid, teamName]
         });
 
-        state.activePlayerId = null; state.currentBid = 0; state.highestBidder = null;
-        await state.save();
-
-        io.emit('updateTeams', await Team.find());
-        io.emit('updatePlayers', await Player.find());
-        io.emit('updateAuction', state);
+        const updatedStateRaw = (await db.execute("SELECT * FROM auction_state WHERE id = 1")).rows[0];
+        const pRes = await db.execute({ sql: "SELECT * FROM players WHERE id = ?", args: [updatedStateRaw.activePlayerId] });
+        io.emit('updateAuction', { ...updatedStateRaw, activePlayerId: formatPlayer(pRes.rows[0]) });
     });
 
+    // 5. Sell Player
+    socket.on('sellPlayer', async () => {
+        const state = (await db.execute("SELECT * FROM auction_state WHERE id = 1")).rows[0];
+        if (!state.activePlayerId || !state.highestBidder) return;
+
+        // Deduct Budget
+        await db.execute({
+            sql: "UPDATE teams SET budget = budget - ? WHERE name = ?",
+            args: [state.currentBid, state.highestBidder]
+        });
+
+        // Mark Player Sold
+        await db.execute({
+            sql: "UPDATE players SET status = 'Sold', soldTo = ? WHERE id = ?",
+            args: [`${state.highestBidder} (${state.currentBid}L)`, state.activePlayerId]
+        });
+
+        // Reset State
+        await db.execute("UPDATE auction_state SET activePlayerId = NULL, currentBid = 0, highestBidder = NULL WHERE id = 1");
+
+        io.emit('updateTeams', (await db.execute("SELECT * FROM teams")).rows.map(formatTeam));
+        io.emit('updatePlayers', (await db.execute("SELECT * FROM players")).rows.map(formatPlayer));
+        io.emit('updateAuction', { activePlayerId: null, currentBid: 0, highestBidder: null });
+    });
+
+    // 6. Cancel Auction
     socket.on('cancelAuction', async () => {
-        let state = await AuctionState.findOne();
-        if(state) {
-            state.activePlayerId = null; state.currentBid = 0; state.highestBidder = null;
-            await state.save();
-            io.emit('updateAuction', state);
-        }
+        await db.execute("UPDATE auction_state SET activePlayerId = NULL, currentBid = 0, highestBidder = NULL WHERE id = 1");
+        io.emit('updateAuction', { activePlayerId: null, currentBid: 0, highestBidder: null });
     });
+
+    // 7. Chat
+    socket.on('sendMessage', async (data) => {
+        const res = await db.execute({
+            sql: "INSERT INTO chats (sender, role, text) VALUES (?, ?, ?) RETURNING *",
+            args: [data.sender, data.role, data.text]
+        });
+        io.emit('newMessage', res.rows[0]);
+    });
+});
+
+// --- ROUTES ---
+app.use(cors({ origin: "*" }));
+app.get('/health', (req, res) => res.send('Backend Turso Alive!'));
+
+// Reset Budgets Route
+app.get('/reset-teams', async (req, res) => {
+    await db.execute("UPDATE teams SET budget = 1000");
+    res.send("✅ Budgets Reset to 1000L");
 });
 
 const PORT = process.env.PORT || 3000;
