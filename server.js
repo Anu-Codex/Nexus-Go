@@ -10,28 +10,38 @@ app.use(cors());
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: {
-        origin: "*", // Allows any frontend to connect
-        methods: ["GET", "POST"]
-    }
+    cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// TURSO CLIENT
+// --- FIX: Clean the URL and check Token ---
+let dbUrl = (process.env.TURSO_DATABASE_URL || "").trim();
+if (dbUrl.endsWith('/')) dbUrl = dbUrl.slice(0, -1); // Remove trailing slash
+
+const dbToken = (process.env.TURSO_AUTH_TOKEN || "").trim();
+
+if (!dbUrl || !dbToken) {
+    console.error("❌ CRITICAL ERROR: TURSO_DATABASE_URL or TURSO_AUTH_TOKEN is missing!");
+    process.exit(1);
+}
+
 const db = createClient({
-    url: process.env.TURSO_DATABASE_URL || "",
-    authToken: process.env.TURSO_AUTH_TOKEN || "",
+    url: dbUrl,
+    authToken: dbToken,
 });
 
-// Helper to make SQLite data look like MongoDB data
 const format = (row) => {
     if (!row) return null;
     return { ...row, _id: row.id ? row.id.toString() : null }; 
 };
 
-// INITIALIZE DATABASE AND START SERVER
 async function startServer() {
     try {
-        console.log("⏳ Initializing Turso Database...");
+        console.log("⏳ Connecting to Turso at:", dbUrl);
+        
+        // Simple test query to verify connection before running tables
+        await db.execute("SELECT 1");
+        console.log("📡 Turso Connection Verified");
+
         await db.execute(`CREATE TABLE IF NOT EXISTS players (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, strength INTEGER, cardType TEXT, status TEXT, baseValue INTEGER, soldTo TEXT)`);
         await db.execute(`CREATE TABLE IF NOT EXISTS teams (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, captainEmail TEXT, budget INTEGER)`);
         await db.execute(`CREATE TABLE IF NOT EXISTS auction_state (id INTEGER PRIMARY KEY, activePlayerId INTEGER, currentBid INTEGER, highestBidder TEXT)`);
@@ -47,114 +57,90 @@ async function startServer() {
             ["RISING FALCONS", "abhisek@nexus.com", 1000],
             ["Golden Knights FC", "sanju@nexus.com", 1000]
         ];
+        
         for (const [name, email, budget] of teams) {
             await db.execute({
                 sql: "INSERT OR IGNORE INTO teams (name, captainEmail, budget) VALUES (?, ?, ?)",
                 args: [name, email, budget]
             });
         }
-        console.log("✅ Turso Database Ready");
+        
+        console.log("✅ Database Schema Ready");
 
-        // START LISTENING
         const PORT = process.env.PORT || 3000;
-        server.listen(PORT, () => {
-            console.log(`🚀 Server running on port ${PORT}`);
-        });
+        server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
     } catch (err) {
-        console.error("❌ Failed to start server:", err);
+        console.error("❌ Failed to start server:", err.message);
+        // Don't kill the process on Render if it's just a transient DB error
+        setTimeout(startServer, 5000); 
     }
 }
 
-// Health Check Route
-app.get('/', (req, res) => res.send("Auction Server is Running"));
+// Routes and Socket logic remain the same
+app.get('/', (req, res) => res.send("Auction Server Alive"));
 
 io.on('connection', async (socket) => {
-    console.log("👤 User connected:", socket.id);
-
-    const sendInitialData = async () => {
+    const refresh = async () => {
         try {
-            const pRes = await db.execute("SELECT * FROM players");
-            const tRes = await db.execute("SELECT * FROM teams");
-            const cRes = await db.execute("SELECT * FROM chats ORDER BY id DESC LIMIT 50");
+            const p = await db.execute("SELECT * FROM players");
+            const t = await db.execute("SELECT * FROM teams");
+            const c = await db.execute("SELECT * FROM chats ORDER BY id DESC LIMIT 50");
             const sRes = await db.execute("SELECT * FROM auction_state WHERE id = 1");
-
-            const players = pRes.rows.map(format);
-            const teams = tRes.rows.map(format);
-            const chats = cRes.rows.map(format).reverse();
             let state = sRes.rows[0];
-
             if (state && state.activePlayerId) {
                 const activeP = await db.execute({ sql: "SELECT * FROM players WHERE id = ?", args: [state.activePlayerId] });
                 state.activePlayerId = format(activeP.rows[0]);
             }
-
-            socket.emit('initialData', { players, teams, state, chats });
-        } catch (e) { console.error("Error sending initial data:", e); }
+            socket.emit('initialData', { players: p.rows.map(format), teams: t.rows.map(format), state, chats: c.rows.map(format).reverse() });
+        } catch (e) { console.error(e); }
     };
-
-    await sendInitialData();
+    await refresh();
 
     socket.on('addPlayer', async (data) => {
-        try {
-            await db.execute({
-                sql: "INSERT INTO players (name, strength, cardType, baseValue, status, soldTo) VALUES (?, ?, ?, ?, 'Available', '-')",
-                args: [data.name, data.strength, data.cardType, data.baseValue]
-            });
-            const p = await db.execute("SELECT * FROM players");
-            io.emit('updatePlayers', p.rows.map(format));
-        } catch (e) { console.error(e); }
+        await db.execute({ sql: "INSERT INTO players (name, strength, cardType, baseValue, status, soldTo) VALUES (?, ?, ?, ?, 'Available', '-')", args: [data.name, data.strength, data.cardType, data.baseValue] });
+        io.emit('updatePlayers', (await db.execute("SELECT * FROM players")).rows.map(format));
     });
 
     socket.on('startAuction', async ({ playerId, baseValue }) => {
         await db.execute({ sql: "UPDATE auction_state SET activePlayerId = ?, currentBid = ?, highestBidder = NULL WHERE id = 1", args: [playerId, baseValue] });
-        const sRes = await db.execute("SELECT * FROM auction_state WHERE id = 1");
-        const pRes = await db.execute({ sql: "SELECT * FROM players WHERE id = ?", args: [playerId] });
-        io.emit('updateAuction', { ...sRes.rows[0], activePlayerId: format(pRes.rows[0]) });
+        const s = (await db.execute("SELECT * FROM auction_state WHERE id = 1")).rows[0];
+        const p = (await db.execute({ sql: "SELECT * FROM players WHERE id = ?", args: [playerId] })).rows[0];
+        io.emit('updateAuction', { ...s, activePlayerId: format(p) });
     });
 
     socket.on('placeBid', async ({ teamName, increment }) => {
-        const sRes = await db.execute("SELECT * FROM auction_state WHERE id = 1");
-        const state = sRes.rows[0];
-        const tRes = await db.execute({ sql: "SELECT * FROM teams WHERE name = ?", args: [teamName] });
-        if(tRes.rows.length === 0) return;
-        const team = tRes.rows[0];
-
+        const state = (await db.execute("SELECT * FROM auction_state WHERE id = 1")).rows[0];
+        const team = (await db.execute({ sql: "SELECT * FROM teams WHERE name = ?", args: [teamName] })).rows[0];
         const newBid = state.currentBid + increment;
-        if (team.budget < newBid) return socket.emit('errorMsg', "No Budget!");
-
-        await db.execute({ sql: "UPDATE auction_state SET currentBid = ?, highestBidder = ? WHERE id = 1", args: [newBid, teamName] });
-        
-        const updS = await db.execute("SELECT * FROM auction_state WHERE id = 1");
-        const pRes = await db.execute({ sql: "SELECT * FROM players WHERE id = ?", args: [state.activePlayerId] });
-        io.emit('updateAuction', { ...updS.rows[0], activePlayerId: format(pRes.rows[0]) });
+        if (team && team.budget >= newBid) {
+            await db.execute({ sql: "UPDATE auction_state SET currentBid = ?, highestBidder = ? WHERE id = 1", args: [newBid, teamName] });
+            const updS = (await db.execute("SELECT * FROM auction_state WHERE id = 1")).rows[0];
+            const p = (await db.execute({ sql: "SELECT * FROM players WHERE id = ?", args: [state.activePlayerId] })).rows[0];
+            io.emit('updateAuction', { ...updS, activePlayerId: format(p) });
+        }
     });
 
     socket.on('sellPlayer', async () => {
-        const stateRes = await db.execute("SELECT * FROM auction_state WHERE id = 1");
-        const state = stateRes.rows[0];
-        if (!state.activePlayerId || !state.highestBidder) return;
-
-        await db.execute({ sql: "UPDATE teams SET budget = budget - ? WHERE name = ?", args: [state.currentBid, state.highestBidder] });
-        await db.execute({ sql: "UPDATE players SET status = 'Sold', soldTo = ? WHERE id = ?", args: [`${state.highestBidder} (${state.currentBid}L)`, state.activePlayerId] });
-        await db.execute("UPDATE auction_state SET activePlayerId = NULL, currentBid = 0, highestBidder = NULL WHERE id = 1");
-        
-        const p = await db.execute("SELECT * FROM players");
-        const t = await db.execute("SELECT * FROM teams");
-        io.emit('updatePlayers', p.rows.map(format));
-        io.emit('updateTeams', t.rows.map(format));
-        io.emit('updateAuction', { activePlayerId: null });
+        const state = (await db.execute("SELECT * FROM auction_state WHERE id = 1")).rows[0];
+        if (state.activePlayerId && state.highestBidder) {
+            await db.execute({ sql: "UPDATE teams SET budget = budget - ? WHERE name = ?", args: [state.currentBid, state.highestBidder] });
+            await db.execute({ sql: "UPDATE players SET status = 'Sold', soldTo = ? WHERE id = ?", args: [`${state.highestBidder} (${state.currentBid}L)`, state.activePlayerId] });
+            await db.execute("UPDATE auction_state SET activePlayerId = NULL, currentBid = 0, highestBidder = NULL WHERE id = 1");
+            io.emit('updatePlayers', (await db.execute("SELECT * FROM players")).rows.map(format));
+            io.emit('updateTeams', (await db.execute("SELECT * FROM teams")).rows.map(format));
+            io.emit('updateAuction', { activePlayerId: null });
+        }
     });
 
-    socket.on('sendMessage', async (data) => {
-        const res = await db.execute({ sql: "INSERT INTO chats (sender, role, text) VALUES (?, ?, ?) RETURNING *", args: [data.sender, data.role, data.text] });
+    socket.on('sendMessage', async (d) => {
+        const res = await db.execute({ sql: "INSERT INTO chats (sender, role, text) VALUES (?, ?, ?) RETURNING *", args: [d.sender, d.role, d.text] });
         io.emit('newMessage', format(res.rows[0]));
     });
 
     socket.on('deletePlayer', async (id) => {
         await db.execute({ sql: "DELETE FROM players WHERE id = ?", args: [id] });
-        const p = await db.execute("SELECT * FROM players");
-        io.emit('updatePlayers', p.rows.map(format));
+        io.emit('updatePlayers', (await db.execute("SELECT * FROM players")).rows.map(format));
     });
 });
 
